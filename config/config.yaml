@@ -1,0 +1,48 @@
+# Main configuration file for MNIST training
+
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  root: "./data"
+  download: true
+  num_workers: 4
+
+# Model configuration
+model:
+  dropout_p: 0.5
+
+# Augmentation configuration
+augmentation:
+  # Training augmentations
+  random_affine:
+    enabled: true
+    degrees: 10
+    translate: [0.1, 0.1]
+    scale: [0.9, 1.1]
+  random_erasing:
+    enabled: true
+    p: 0.1
+    scale: [0.02, 0.1]
+  # Normalization (always applied)
+  normalize:
+    mean: [0.1307]
+    std: [0.3081]
+
+# Training configuration
+training:
+  batch_size: 128
+  epochs: 20
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  scheduler_step_size: 7
+  scheduler_gamma: 0.1
+  checkpoint_dir: "./checkpoints"
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ./outputs/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false

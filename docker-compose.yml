@@ -1,0 +1,66 @@
+# version: '3.8'
+
+services:
+  # MNIST Training Service
+  mnist-trainer:
+    build: .
+    image: vision-trainer:latest
+    container_name: mnist-training
+
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Volume mounts for data persistence
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./outputs:/app/outputs
+
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+
+    # Default MNIST training
+    # To customize: MNIST_ARGS="training.batch_size=512" docker-compose up mnist-trainer
+    command: python3 train.py ${MNIST_ARGS:-}
+
+    # Restart policy - set to "no" so training runs once and stops
+    restart: "no"
+
+  # CIFAR-10 Training Service
+  cifar-trainer:
+    build: .
+    image: vision-trainer:latest
+    container_name: cifar-training
+
+    # GPU support
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+    # Volume mounts for data persistence
+    volumes:
+      - ./data:/app/data
+      - ./checkpoints:/app/checkpoints
+      - ./outputs:/app/outputs
+
+    # Environment variables
+    environment:
+      - CUDA_VISIBLE_DEVICES=0
+      - PYTHONUNBUFFERED=1
+
+    command: python3 train_cifar.py
+
+    # Restart policy - set to "no" so training runs once and stops
+    restart: "no"

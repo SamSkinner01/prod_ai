@@ -1,0 +1,56 @@
+# Configuration file for CIFAR-10 training
+
+defaults:
+  - _self_
+
+# Data configuration
+data:
+  root: "./data"
+  download: true
+  num_workers: 4
+
+# Model configuration
+model:
+  architecture: "ResNet18"
+  num_classes: 10
+
+# Augmentation configuration
+augmentation:
+  # Training augmentations
+  random_crop:
+    enabled: true
+    size: 32
+    padding: 4
+  random_horizontal_flip:
+    enabled: true
+    p: 0.5
+  color_jitter:
+    enabled: true
+    brightness: 0.2
+    contrast: 0.2
+    saturation: 0.2
+    hue: 0.0
+  random_erasing:
+    enabled: true
+    p: 0.1
+    scale: [0.02, 0.1]
+  # Normalization (always applied)
+  normalize:
+    mean: [0.4914, 0.4822, 0.4465]
+    std: [0.2470, 0.2435, 0.2616]
+
+# Training configuration
+training:
+  batch_size: 128
+  epochs: 200
+  learning_rate: 0.1
+  momentum: 0.9
+  weight_decay: 0.0005
+  checkpoint_dir: "./checkpoints"
+
+# Hydra configuration
+hydra:
+  run:
+    dir: ./outputs/cifar/${now:%Y-%m-%d}/${now:%H-%M-%S}
+  job:
+    chdir: false
