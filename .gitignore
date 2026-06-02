@@ -36,7 +36,8 @@ ENV/
 .ipynb_checkpoints
 
 # Data and models
-data/
+/data/*
+!src/data/
 checkpoints/
 outputs/
 *.pt
