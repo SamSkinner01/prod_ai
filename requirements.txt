@@ -10,3 +10,7 @@ omegaconf>=2.3.0
 # Utilities
 tqdm>=4.65.0
 pillow>=9.5.0
+
+# Visualization and monitoring
+tensorboard>=2.13.0
+matplotlib>=3.7.0

@@ -49,6 +49,7 @@ multirun/
 
 # Logs
 *.log
+runs/
 
 # OS
 .DS_Store

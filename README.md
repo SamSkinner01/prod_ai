@@ -239,6 +239,87 @@ This allows the DataLoader to retrieve batches more efficiently, as requested.
 - Global average pooling + FC layer (10 output classes)
 - ~11M parameters
 
+## TensorBoard Visualization
+
+The training automatically logs comprehensive metrics and visualizations to TensorBoard:
+
+### What's Logged
+
+**Real-time Metrics:**
+- Training & validation loss curves
+- Validation accuracy over time
+- Learning rate schedule
+
+**Image Visualizations:**
+- Sample predictions with confidence scores (every 5/10 epochs)
+- Misclassified images showing what the model gets wrong
+- Confusion matrix samples (common misclassifications)
+
+### Viewing TensorBoard
+
+**Local Training:**
+```bash
+# Start training (logs go to ./runs/)
+python train.py
+
+# In another terminal, start TensorBoard
+tensorboard --logdir=runs
+
+# Open browser to http://localhost:6006
+```
+
+**Docker Training:**
+```bash
+# Option 1: Using docker-compose (recommended)
+docker-compose up tensorboard  # Starts TensorBoard server
+docker-compose up mnist-trainer  # Run training in another terminal
+
+# Option 2: Run TensorBoard after training
+docker run -p 6006:6006 -v ${PWD}/runs:/app/runs vision-trainer tensorboard --logdir=/app/runs --host=0.0.0.0
+
+# Open browser to http://localhost:6006
+```
+
+**Both Datasets:**
+```bash
+# TensorBoard shows both MNIST and CIFAR-10 runs in same interface
+tensorboard --logdir=runs
+
+# You can compare different hyperparameter runs side-by-side
+```
+
+### What You Can See
+
+1. **SCALARS Tab:**
+   - Training/validation loss over epochs
+   - Validation accuracy trends
+   - Learning rate decay curves
+   - Compare multiple runs with different hyperparameters
+
+2. **IMAGES Tab:**
+   - **validation_samples**: Predictions on random validation images (green = correct, red = wrong)
+   - **misclassified**: Grid of images the model predicted incorrectly
+   - **confusion**: Most common misclassification pairs (e.g., "dog" predicted as "cat")
+
+3. **Use Cases:**
+   - **Debug poor performance**: Look at misclassified images to understand what the model struggles with
+   - **Monitor training**: Watch loss curves in real-time to catch overfitting early
+   - **Compare augmentations**: Run with/without augmentations and compare accuracy
+   - **Hyperparameter tuning**: Compare different learning rates, batch sizes, etc.
+
+### Tips
+
+```bash
+# Compare specific runs by filtering
+tensorboard --logdir=runs --path_prefix=mnist
+
+# Refresh data every 30 seconds
+tensorboard --logdir=runs --reload_interval=30
+
+# Run on different port
+tensorboard --logdir=runs --port=6007
+```
+
 ## Docker Architecture
 
 **Single Image for Both Datasets:**

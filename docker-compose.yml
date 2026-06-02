@@ -21,6 +21,7 @@ services:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./outputs:/app/outputs
+      - ./runs:/app/runs
 
     # Environment variables
     environment:
@@ -54,6 +55,7 @@ services:
       - ./data:/app/data
       - ./checkpoints:/app/checkpoints
       - ./outputs:/app/outputs
+      - ./runs:/app/runs
 
     # Environment variables
     environment:
@@ -64,3 +66,23 @@ services:
 
     # Restart policy - set to "no" so training runs once and stops
     restart: "no"
+
+  # TensorBoard Service
+  tensorboard:
+    build: .
+    image: vision-trainer:latest
+    container_name: tensorboard-server
+
+    # Volume mounts for reading logs
+    volumes:
+      - ./runs:/app/runs
+
+    # Expose TensorBoard port
+    ports:
+      - "6006:6006"
+
+    # Command to run TensorBoard
+    command: tensorboard --logdir=/app/runs --host=0.0.0.0 --port=6006
+
+    # Restart policy
+    restart: unless-stopped

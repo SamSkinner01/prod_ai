@@ -3,7 +3,9 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
+from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import v2
 import logging
 from pathlib import Path
@@ -11,8 +13,19 @@ from tqdm import tqdm
 
 from src.data.cifar_dataset import CIFAR10Dataset
 from src.models.resnet import ResNet18
+from src.utils.visualization import (
+    log_misclassified_images,
+    log_sample_predictions,
+    log_confusion_matrix_samples
+)
 
 log = logging.getLogger(__name__)
+
+# CIFAR-10 class names
+CIFAR10_CLASSES = [
+    'airplane', 'automobile', 'bird', 'cat', 'deer',
+    'dog', 'frog', 'horse', 'ship', 'truck'
+]
 
 
 class CIFAR10GPUAugmentation(nn.Module):
@@ -153,8 +166,9 @@ def validate(
     val_loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    augmentation: nn.Module
-) -> tuple[float, float]:
+    augmentation: nn.Module,
+    collect_samples: bool = False
+) -> tuple[float, float, dict]:
     """
     Validate the model.
 
@@ -164,17 +178,27 @@ def validate(
         criterion: Loss function
         device: Device to validate on
         augmentation: GPU augmentation module (without training transforms)
+        collect_samples: If True, collects sample images for visualization
 
     Returns:
-        Tuple of (average_loss, accuracy)
+        Tuple of (average_loss, accuracy, samples_dict)
     """
     model.eval()
     val_loss = 0.0
     correct = 0
     total = 0
 
+    # For collecting visualization samples
+    all_images = []
+    all_predictions = []
+    all_targets = []
+    all_probabilities = []
+
     with torch.no_grad():
-        for data, target in tqdm(val_loader, desc="Validating"):
+        for batch_idx, (data, target) in enumerate(tqdm(val_loader, desc="Validating")):
+            # Store original images (before normalization) for visualization
+            original_data = data.clone() if collect_samples and batch_idx == 0 else None
+
             data, target = data.to(device), target.to(device)
 
             # Apply GPU normalization (no training augmentations)
@@ -184,14 +208,29 @@ def validate(
             loss = criterion(output, target)
 
             val_loss += loss.item()
-            _, predicted = output.max(1)
+            probabilities = F.softmax(output, dim=1)
+            confidence, predicted = probabilities.max(1)
             total += target.size(0)
             correct += predicted.eq(target).sum().item()
+
+            # Collect samples from first batch for visualization
+            if collect_samples and batch_idx == 0:
+                all_images = original_data
+                all_predictions = predicted.cpu()
+                all_targets = target.cpu()
+                all_probabilities = confidence.cpu()
 
     avg_loss = val_loss / len(val_loader)
     accuracy = 100. * correct / total
 
-    return avg_loss, accuracy
+    samples = {
+        'images': all_images,
+        'predictions': all_predictions,
+        'targets': all_targets,
+        'probabilities': all_probabilities
+    } if collect_samples else {}
+
+    return avg_loss, accuracy, samples
 
 
 @hydra.main(version_base=None, config_path="config", config_name="config_cifar")
@@ -264,6 +303,12 @@ def main(cfg: DictConfig) -> None:
         T_max=cfg.training.epochs
     )
 
+    # TensorBoard writer
+    log_dir = Path("runs") / f"cifar_{cfg.training.batch_size}_lr{cfg.training.learning_rate}"
+    writer = SummaryWriter(log_dir=str(log_dir))
+    log.info(f"TensorBoard logs: {log_dir}")
+    log.info("Run: tensorboard --logdir=runs")
+
     # Training loop
     log.info("Starting training...")
     best_acc = 0.0
@@ -275,14 +320,67 @@ def main(cfg: DictConfig) -> None:
             device, train_augmentation, epoch
         )
 
-        # Validate
-        val_loss, val_acc = validate(
-            model, val_loader, criterion, device, val_augmentation
+        # Validate and collect samples for visualization
+        val_loss, val_acc, samples = validate(
+            model, val_loader, criterion, device, val_augmentation,
+            collect_samples=(epoch % 10 == 0 or epoch == 1)  # Visualize every 10 epochs
         )
 
         # Step scheduler
         scheduler.step()
         current_lr = scheduler.get_last_lr()[0]
+
+        # TensorBoard logging
+        writer.add_scalar('Loss/train', train_loss, epoch)
+        writer.add_scalar('Loss/val', val_loss, epoch)
+        writer.add_scalar('Accuracy/val', val_acc, epoch)
+        writer.add_scalar('Learning_Rate', current_lr, epoch)
+
+        # Log sample predictions and misclassified images
+        if samples:
+            # Log sample predictions with confidence scores
+            log_sample_predictions(
+                writer=writer,
+                images=samples['images'],
+                predictions=samples['predictions'],
+                targets=samples['targets'],
+                probabilities=samples['probabilities'],
+                class_names=CIFAR10_CLASSES,
+                epoch=epoch,
+                num_images=16,
+                mean=cfg.augmentation.normalize.mean,
+                std=cfg.augmentation.normalize.std,
+                tag='validation_samples'
+            )
+
+            # Log misclassified images
+            num_misclassified = log_misclassified_images(
+                writer=writer,
+                images=samples['images'],
+                predictions=samples['predictions'],
+                targets=samples['targets'],
+                class_names=CIFAR10_CLASSES,
+                epoch=epoch,
+                max_images=16,
+                mean=cfg.augmentation.normalize.mean,
+                std=cfg.augmentation.normalize.std,
+                tag='misclassified'
+            )
+
+            if num_misclassified > 0:
+                log.info(f"Logged {num_misclassified} misclassified images to TensorBoard")
+
+            # Log confusion matrix samples
+            log_confusion_matrix_samples(
+                writer=writer,
+                images=samples['images'],
+                predictions=samples['predictions'],
+                targets=samples['targets'],
+                class_names=CIFAR10_CLASSES,
+                epoch=epoch,
+                mean=cfg.augmentation.normalize.mean,
+                std=cfg.augmentation.normalize.std
+            )
 
         # Log results
         log.info(
@@ -310,6 +408,7 @@ def main(cfg: DictConfig) -> None:
             log.info(f"Saved best model with accuracy: {best_acc:.2f}%")
 
     log.info(f"Training completed! Best validation accuracy: {best_acc:.2f}%")
+    writer.close()
 
 
 if __name__ == "__main__":
