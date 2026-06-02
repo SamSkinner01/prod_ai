@@ -18,9 +18,10 @@ services:
 
     # Volume mounts for data persistence
     volumes:
-      - ./data:/app/data
-      - ./checkpoints:/app/checkpoints
-      - ./outputs:/app/outputs
+      - .:/app
+
+    # Working directory
+    working_dir: /app
 
     # Environment variables
     environment:
@@ -51,9 +52,10 @@ services:
 
     # Volume mounts for data persistence
     volumes:
-      - ./data:/app/data
-      - ./checkpoints:/app/checkpoints
-      - ./outputs:/app/outputs
+      - .:/app
+
+    # Working directory
+    working_dir: /app
 
     # Environment variables
     environment:
@@ -64,3 +66,26 @@ services:
 
     # Restart policy - set to "no" so training runs once and stops
     restart: "no"
+
+  # MLflow Service
+  mlflow:
+    build: .
+    image: vision-trainer:latest
+    container_name: mlflow-server
+
+    # Volume mounts for reading experiment logs
+    volumes:
+      - .:/app
+
+    # Expose MLflow UI port
+    ports:
+      - "5000:5000"
+
+    # Working directory
+    working_dir: /app
+
+    # Command to run MLflow UI with SQLite backend
+    command: mlflow ui --backend-store-uri sqlite:///mlflow.db --host=0.0.0.0 --port=5000
+
+    # Restart policy
+    restart: unless-stopped

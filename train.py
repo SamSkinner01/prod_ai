@@ -3,16 +3,27 @@ from omegaconf import DictConfig, OmegaConf
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 from torch.utils.data import DataLoader
 from torchvision.transforms import v2
 import logging
 from pathlib import Path
 from tqdm import tqdm
+import mlflow
+import mlflow.pytorch
 
 from src.data.mnist_dataset import MNISTDataset
 from src.models.cnn import MNISTNet
+from src.utils.mlflow_utils import (
+    log_misclassified_images_mlflow,
+    log_sample_predictions_mlflow,
+    log_confusion_matrix_samples_mlflow
+)
 
 log = logging.getLogger(__name__)
+
+# MNIST class names
+MNIST_CLASSES = [str(i) for i in range(10)]
 
 
 class GPUAugmentation(nn.Module):
@@ -139,8 +150,9 @@ def validate(
     val_loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    augmentation: nn.Module
-) -> tuple[float, float]:
+    augmentation: nn.Module,
+    collect_samples: bool = False
+) -> tuple[float, float, dict]:
     """
     Validate the model.
 
@@ -150,17 +162,27 @@ def validate(
         criterion: Loss function
         device: Device to validate on
         augmentation: GPU augmentation module (without training transforms)
+        collect_samples: If True, collects sample images for visualization
 
     Returns:
-        Tuple of (average_loss, accuracy)
+        Tuple of (average_loss, accuracy, samples_dict)
     """
     model.eval()
     val_loss = 0.0
     correct = 0
     total = 0
 
+    # For collecting visualization samples
+    all_images = []
+    all_predictions = []
+    all_targets = []
+    all_probabilities = []
+
     with torch.no_grad():
-        for data, target in tqdm(val_loader, desc="Validating"):
+        for batch_idx, (data, target) in enumerate(tqdm(val_loader, desc="Validating")):
+            # Store original images (before normalization) for visualization
+            original_data = data.clone() if collect_samples and batch_idx == 0 else None
+
             data, target = data.to(device), target.to(device)
 
             # Apply GPU normalization (no training augmentations)
@@ -170,14 +192,29 @@ def validate(
             loss = criterion(output, target)
 
             val_loss += loss.item()
-            _, predicted = output.max(1)
+            probabilities = F.softmax(output, dim=1)
+            confidence, predicted = probabilities.max(1)
             total += target.size(0)
             correct += predicted.eq(target).sum().item()
+
+            # Collect samples from first batch for visualization
+            if collect_samples and batch_idx == 0:
+                all_images = original_data
+                all_predictions = predicted.cpu()
+                all_targets = target.cpu()
+                all_probabilities = confidence.cpu()
 
     avg_loss = val_loss / len(val_loader)
     accuracy = 100. * correct / total
 
-    return avg_loss, accuracy
+    samples = {
+        'images': all_images,
+        'predictions': all_predictions,
+        'targets': all_targets,
+        'probabilities': all_probabilities
+    } if collect_samples else {}
+
+    return avg_loss, accuracy, samples
 
 
 @hydra.main(version_base=None, config_path="config", config_name="config")
@@ -250,6 +287,28 @@ def main(cfg: DictConfig) -> None:
         gamma=cfg.training.scheduler_gamma
     )
 
+    # MLflow setup - use SQLite backend
+    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    mlflow.set_experiment("mnist_training")
+    mlflow.start_run(run_name=f"bs{cfg.training.batch_size}_lr{cfg.training.learning_rate}")
+
+    # Log hyperparameters
+    mlflow.log_params({
+        "batch_size": cfg.training.batch_size,
+        "learning_rate": cfg.training.learning_rate,
+        "epochs": cfg.training.epochs,
+        "weight_decay": cfg.training.weight_decay,
+        "dropout_p": cfg.model.dropout_p,
+        "optimizer": "Adam",
+        "scheduler_step_size": cfg.training.scheduler_step_size,
+        "scheduler_gamma": cfg.training.scheduler_gamma,
+        "augmentation_affine": cfg.augmentation.random_affine.enabled,
+        "augmentation_erasing": cfg.augmentation.random_erasing.enabled,
+    })
+
+    log.info("MLflow tracking enabled")
+    log.info("View results: mlflow ui --port 5000")
+
     # Training loop
     log.info("Starting training...")
     best_acc = 0.0
@@ -261,13 +320,67 @@ def main(cfg: DictConfig) -> None:
             device, train_augmentation, epoch
         )
 
-        # Validate
-        val_loss, val_acc = validate(
-            model, val_loader, criterion, device, val_augmentation
+        # Validate and collect samples for visualization
+        val_loss, val_acc, samples = validate(
+            model, val_loader, criterion, device, val_augmentation,
+            collect_samples=(epoch % 5 == 0 or epoch == 1)  # Visualize every 5 epochs
         )
 
         # Step scheduler
+        current_lr = scheduler.get_last_lr()[0]
         scheduler.step()
+
+        # MLflow logging
+        mlflow.log_metrics({
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+            'val_accuracy': val_acc,
+            'learning_rate': current_lr
+        }, step=epoch)
+
+        # Log sample predictions and misclassified images
+        if samples:
+            # Log sample predictions with confidence scores
+            log_sample_predictions_mlflow(
+                images=samples['images'],
+                predictions=samples['predictions'],
+                targets=samples['targets'],
+                probabilities=samples['probabilities'],
+                class_names=MNIST_CLASSES,
+                step=epoch,
+                num_images=16,
+                mean=cfg.augmentation.normalize.mean,
+                std=cfg.augmentation.normalize.std,
+                artifact_path='validation_samples'
+            )
+
+            # Log misclassified images
+            num_misclassified = log_misclassified_images_mlflow(
+                images=samples['images'],
+                predictions=samples['predictions'],
+                targets=samples['targets'],
+                class_names=MNIST_CLASSES,
+                step=epoch,
+                max_images=16,
+                mean=cfg.augmentation.normalize.mean,
+                std=cfg.augmentation.normalize.std,
+                artifact_path='misclassified'
+            )
+
+            if num_misclassified > 0:
+                log.info(f"Logged {num_misclassified} misclassified images to MLflow")
+
+            # Log confusion matrix samples
+            log_confusion_matrix_samples_mlflow(
+                images=samples['images'],
+                predictions=samples['predictions'],
+                targets=samples['targets'],
+                class_names=MNIST_CLASSES,
+                step=epoch,
+                mean=cfg.augmentation.normalize.mean,
+                std=cfg.augmentation.normalize.std,
+                artifact_path='confusion'
+            )
 
         # Log results
         log.info(
@@ -293,7 +406,14 @@ def main(cfg: DictConfig) -> None:
 
             log.info(f"Saved best model with accuracy: {best_acc:.2f}%")
 
+    # Log final metrics and model
+    mlflow.log_metric("best_val_accuracy", best_acc)
+
+    # Log the best model as an artifact
+    mlflow.pytorch.log_model(model, "model")
+
     log.info(f"Training completed! Best validation accuracy: {best_acc:.2f}%")
+    mlflow.end_run()
 
 
 if __name__ == "__main__":

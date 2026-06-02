@@ -10,3 +10,7 @@ omegaconf>=2.3.0
 # Utilities
 tqdm>=4.65.0
 pillow>=9.5.0
+
+# Experiment tracking and monitoring
+mlflow>=2.8.0
+matplotlib>=3.7.0

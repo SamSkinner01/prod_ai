@@ -36,7 +36,8 @@ ENV/
 .ipynb_checkpoints
 
 # Data and models
-data/
+/data/*
+!src/data/
 checkpoints/
 outputs/
 *.pt
@@ -49,6 +50,14 @@ multirun/
 
 # Logs
 *.log
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-shm
+mlflow.db-wal
+runs/
 
 # OS
 .DS_Store
