@@ -49,6 +49,13 @@ multirun/
 
 # Logs
 *.log
+
+# MLflow
+mlruns/
+mlartifacts/
+mlflow.db
+mlflow.db-shm
+mlflow.db-wal
 runs/
 
 # OS

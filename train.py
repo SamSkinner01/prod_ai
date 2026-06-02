@@ -5,18 +5,19 @@ import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 from torch.utils.data import DataLoader
-from torch.utils.tensorboard import SummaryWriter
 from torchvision.transforms import v2
 import logging
 from pathlib import Path
 from tqdm import tqdm
+import mlflow
+import mlflow.pytorch
 
 from src.data.mnist_dataset import MNISTDataset
 from src.models.cnn import MNISTNet
-from src.utils.visualization import (
-    log_misclassified_images,
-    log_sample_predictions,
-    log_confusion_matrix_samples
+from src.utils.mlflow_utils import (
+    log_misclassified_images_mlflow,
+    log_sample_predictions_mlflow,
+    log_confusion_matrix_samples_mlflow
 )
 
 log = logging.getLogger(__name__)
@@ -286,11 +287,27 @@ def main(cfg: DictConfig) -> None:
         gamma=cfg.training.scheduler_gamma
     )
 
-    # TensorBoard writer
-    log_dir = Path("runs") / f"mnist_{cfg.training.batch_size}_lr{cfg.training.learning_rate}"
-    writer = SummaryWriter(log_dir=str(log_dir))
-    log.info(f"TensorBoard logs: {log_dir}")
-    log.info("Run: tensorboard --logdir=runs")
+    # MLflow setup - use SQLite backend
+    mlflow.set_tracking_uri("sqlite:///mlflow.db")
+    mlflow.set_experiment("mnist_training")
+    mlflow.start_run(run_name=f"bs{cfg.training.batch_size}_lr{cfg.training.learning_rate}")
+
+    # Log hyperparameters
+    mlflow.log_params({
+        "batch_size": cfg.training.batch_size,
+        "learning_rate": cfg.training.learning_rate,
+        "epochs": cfg.training.epochs,
+        "weight_decay": cfg.training.weight_decay,
+        "dropout_p": cfg.model.dropout_p,
+        "optimizer": "Adam",
+        "scheduler_step_size": cfg.training.scheduler_step_size,
+        "scheduler_gamma": cfg.training.scheduler_gamma,
+        "augmentation_affine": cfg.augmentation.random_affine.enabled,
+        "augmentation_erasing": cfg.augmentation.random_erasing.enabled,
+    })
+
+    log.info("MLflow tracking enabled")
+    log.info("View results: mlflow ui --port 5000")
 
     # Training loop
     log.info("Starting training...")
@@ -313,56 +330,56 @@ def main(cfg: DictConfig) -> None:
         current_lr = scheduler.get_last_lr()[0]
         scheduler.step()
 
-        # TensorBoard logging
-        writer.add_scalar('Loss/train', train_loss, epoch)
-        writer.add_scalar('Loss/val', val_loss, epoch)
-        writer.add_scalar('Accuracy/val', val_acc, epoch)
-        writer.add_scalar('Learning_Rate', current_lr, epoch)
+        # MLflow logging
+        mlflow.log_metrics({
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+            'val_accuracy': val_acc,
+            'learning_rate': current_lr
+        }, step=epoch)
 
         # Log sample predictions and misclassified images
         if samples:
             # Log sample predictions with confidence scores
-            log_sample_predictions(
-                writer=writer,
+            log_sample_predictions_mlflow(
                 images=samples['images'],
                 predictions=samples['predictions'],
                 targets=samples['targets'],
                 probabilities=samples['probabilities'],
                 class_names=MNIST_CLASSES,
-                epoch=epoch,
+                step=epoch,
                 num_images=16,
                 mean=cfg.augmentation.normalize.mean,
                 std=cfg.augmentation.normalize.std,
-                tag='validation_samples'
+                artifact_path='validation_samples'
             )
 
             # Log misclassified images
-            num_misclassified = log_misclassified_images(
-                writer=writer,
+            num_misclassified = log_misclassified_images_mlflow(
                 images=samples['images'],
                 predictions=samples['predictions'],
                 targets=samples['targets'],
                 class_names=MNIST_CLASSES,
-                epoch=epoch,
+                step=epoch,
                 max_images=16,
                 mean=cfg.augmentation.normalize.mean,
                 std=cfg.augmentation.normalize.std,
-                tag='misclassified'
+                artifact_path='misclassified'
             )
 
             if num_misclassified > 0:
-                log.info(f"Logged {num_misclassified} misclassified images to TensorBoard")
+                log.info(f"Logged {num_misclassified} misclassified images to MLflow")
 
             # Log confusion matrix samples
-            log_confusion_matrix_samples(
-                writer=writer,
+            log_confusion_matrix_samples_mlflow(
                 images=samples['images'],
                 predictions=samples['predictions'],
                 targets=samples['targets'],
                 class_names=MNIST_CLASSES,
-                epoch=epoch,
+                step=epoch,
                 mean=cfg.augmentation.normalize.mean,
-                std=cfg.augmentation.normalize.std
+                std=cfg.augmentation.normalize.std,
+                artifact_path='confusion'
             )
 
         # Log results
@@ -389,8 +406,14 @@ def main(cfg: DictConfig) -> None:
 
             log.info(f"Saved best model with accuracy: {best_acc:.2f}%")
 
+    # Log final metrics and model
+    mlflow.log_metric("best_val_accuracy", best_acc)
+
+    # Log the best model as an artifact
+    mlflow.pytorch.log_model(model, "model")
+
     log.info(f"Training completed! Best validation accuracy: {best_acc:.2f}%")
-    writer.close()
+    mlflow.end_run()
 
 
 if __name__ == "__main__":

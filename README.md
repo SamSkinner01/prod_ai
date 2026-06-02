@@ -239,85 +239,116 @@ This allows the DataLoader to retrieve batches more efficiently, as requested.
 - Global average pooling + FC layer (10 output classes)
 - ~11M parameters
 
-## TensorBoard Visualization
+## MLflow Experiment Tracking
 
-The training automatically logs comprehensive metrics and visualizations to TensorBoard:
+The training automatically logs comprehensive metrics, parameters, and visualizations to MLflow:
 
 ### What's Logged
+
+**Hyperparameters:**
+- All model, training, and augmentation parameters automatically logged
+- Easily compare different configurations
 
 **Real-time Metrics:**
 - Training & validation loss curves
 - Validation accuracy over time
 - Learning rate schedule
+- Best validation accuracy
 
 **Image Visualizations:**
 - Sample predictions with confidence scores (every 5/10 epochs)
 - Misclassified images showing what the model gets wrong
 - Confusion matrix samples (common misclassifications)
 
-### Viewing TensorBoard
+**Models:**
+- Best model automatically saved and logged to MLflow
+- Can be loaded directly from MLflow for inference
+
+### Viewing MLflow UI
 
 **Local Training:**
 ```bash
-# Start training (logs go to ./runs/)
+# Start training (logs go to mlflow.db)
 python train.py
 
-# In another terminal, start TensorBoard
-tensorboard --logdir=runs
+# In another terminal, start MLflow UI
+mlflow ui --backend-store-uri sqlite:///mlflow.db --port 5000
 
-# Open browser to http://localhost:6006
+# Open browser to http://localhost:5000
 ```
 
 **Docker Training:**
 ```bash
 # Option 1: Using docker-compose (recommended)
-docker-compose up tensorboard  # Starts TensorBoard server
+docker-compose up mlflow  # Starts MLflow UI server
 docker-compose up mnist-trainer  # Run training in another terminal
 
-# Option 2: Run TensorBoard after training
-docker run -p 6006:6006 -v ${PWD}/runs:/app/runs vision-trainer tensorboard --logdir=/app/runs --host=0.0.0.0
+# Option 2: Run MLflow UI manually
+docker run -p 5000:5000 \
+  -v ${PWD}/mlflow.db:/app/mlflow.db \
+  -v ${PWD}/mlruns:/app/mlruns \
+  vision-trainer mlflow ui --backend-store-uri sqlite:///mlflow.db --host=0.0.0.0
 
-# Open browser to http://localhost:6006
+# Open browser to http://localhost:5000
 ```
 
 **Both Datasets:**
 ```bash
-# TensorBoard shows both MNIST and CIFAR-10 runs in same interface
-tensorboard --logdir=runs
+# MLflow shows both MNIST and CIFAR-10 experiments in same interface
+mlflow ui --port 5000
 
-# You can compare different hyperparameter runs side-by-side
+# Experiments are automatically organized:
+# - mnist_training
+# - cifar10_training
 ```
 
-### What You Can See
+### What You Can See in MLflow UI
 
-1. **SCALARS Tab:**
-   - Training/validation loss over epochs
-   - Validation accuracy trends
-   - Learning rate decay curves
-   - Compare multiple runs with different hyperparameters
+1. **Experiments Tab:**
+   - List of all experiments (mnist_training, cifar10_training)
+   - All runs within each experiment
+   - Quick overview of metrics and parameters
 
-2. **IMAGES Tab:**
-   - **validation_samples**: Predictions on random validation images (green = correct, red = wrong)
-   - **misclassified**: Grid of images the model predicted incorrectly
-   - **confusion**: Most common misclassification pairs (e.g., "dog" predicted as "cat")
+2. **Run Comparison:**
+   - Select multiple runs to compare side-by-side
+   - Parallel coordinates plot for hyperparameter analysis
+   - Scatter plots: accuracy vs learning_rate, etc.
+   - Difference view to see what changed between runs
 
-3. **Use Cases:**
-   - **Debug poor performance**: Look at misclassified images to understand what the model struggles with
-   - **Monitor training**: Watch loss curves in real-time to catch overfitting early
-   - **Compare augmentations**: Run with/without augmentations and compare accuracy
-   - **Hyperparameter tuning**: Compare different learning rates, batch sizes, etc.
+3. **Individual Run Page:**
+   - **Metrics**: Interactive charts of loss, accuracy, learning rate over epochs
+   - **Parameters**: All hyperparameters logged (batch_size, lr, augmentation settings, etc.)
+   - **Artifacts**:
+     - Model files (can be loaded directly)
+     - Misclassified images organized by epoch
+     - Validation sample predictions
+     - Confusion matrix examples
+   - **Tags & Notes**: Add custom notes to runs
 
-### Tips
+4. **Use Cases:**
+   - **Debug poor performance**: Click on artifacts to see misclassified images
+   - **Hyperparameter tuning**: Compare 10+ runs with different learning rates in parallel coordinates
+   - **A/B testing augmentations**: Filter runs by augmentation parameters and compare accuracy
+   - **Model registry**: Register best models for deployment
+   - **Reproduce results**: All parameters logged - exact reproduction guaranteed
+
+### MLflow Tips
 
 ```bash
-# Compare specific runs by filtering
-tensorboard --logdir=runs --path_prefix=mnist
+# Filter runs by parameter
+# In UI: Click "+" next to "Search Runs" and add filters
 
-# Refresh data every 30 seconds
-tensorboard --logdir=runs --reload_interval=30
+# Compare specific experiments
+# In UI: Select checkboxes next to runs, click "Compare"
 
-# Run on different port
-tensorboard --logdir=runs --port=6007
+# Download model programmatically
+mlflow.pytorch.load_model("runs:/<run_id>/model")
+
+# Search runs via CLI
+mlflow runs list --experiment-name mnist_training
+
+# Export runs to CSV
+# Available in UI: Click "Download CSV" button
 ```
 
 ## Docker Architecture
